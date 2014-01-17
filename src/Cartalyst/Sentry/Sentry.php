@@ -149,81 +149,117 @@ class Sentry {
 	}
 
 
-	/**
-	 * Attempts to authenticate the given user
-	 * according to the passed credentials.
-	 *
-	 * @param  array  $credentials
-	 * @param  bool   $remember
-	 * @return \Cartalyst\Sentry\Users\UserInterface
-	 * @throws \Cartalyst\Sentry\Throttling\UserBannedException
-	 * @throws \Cartalyst\Sentry\Throttling\UserSuspendedException
-	 * @throws \Cartalyst\Sentry\Users\LoginRequiredException
-	 * @throws \Cartalyst\Sentry\Users\PasswordRequiredException
-	 * @throws \Cartalyst\Sentry\Users\UserNotFoundException
-	 */
-	public function authenticate(array $credentials, $remember = false)
-	{
-		// We'll default to the login name field, but fallback to a hard-coded
-		// 'login' key in the array that was passed.
-		$loginName = $this->userProvider->getEmptyUser()->getLoginName();
-		$loginCredentialKey = (isset($credentials[$loginName])) ? $loginName : 'login';
+	    /**
+     * Attempts to authenticate the given user
+     * according to the passed credentials.
+     *
+     * @param  array  $credentials
+     * @param  bool   $remember
+     * @return \Cartalyst\Sentry\Users\UserInterface
+     */
+    public function authenticate(array $credentials, $remember = false)
+    {
 
-		if (empty($credentials[$loginCredentialKey]))
-		{
-			throw new LoginRequiredException("The [$loginCredentialKey] attribute is required.");
-		}
+        $user = $this->performAuthentication($credentials);
 
-		if (empty($credentials['password']))
-		{
-			throw new PasswordRequiredException('The password attribute is required.');
-		}
+        $user->clearResetPassword();
 
-		// If the user did the fallback 'login' key for the login code which
-		// did not match the actual login name, we'll adjust the array so the
-		// actual login name is provided.
-		if ($loginCredentialKey !== $loginName)
-		{
-			$credentials[$loginName] = $credentials[$loginCredentialKey];
-			unset($credentials[$loginCredentialKey]);
-		}
+        $this->login($user, $remember);
 
-		// If throttling is enabled, we'll firstly check the throttle.
-		// This will tell us if the user is banned before we even attempt
-		// to authenticate them
-		if ($throttlingEnabled = $this->throttleProvider->isEnabled())
-		{
-			if ($throttle = $this->throttleProvider->findByUserLogin($credentials[$loginName], $this->ipAddress))
-			{
-				$throttle->check();
-			}
-		}
+        return $this->user;
+    }
 
-		try
-		{
-			$user = $this->userProvider->findByCredentials($credentials);
-		}
-		catch (UserNotFoundException $e)
-		{
-			if ($throttlingEnabled and isset($throttle))
-			{
-				$throttle->addLoginAttempt();
-			}
+    /**
+     * Checks a user's ability to login with the supplied credentials, without
+     * doing so
+     *
+     * @param  array  $credentials [description]
+     * @throws \Cartalyst\Sentry\Users\UserNotActivatedException
+     * @return \Cartalyst\Sentry\Users\UserInterface
+     */
+    public function checkValidCredentials(array $credentials,$activated = true)
+    {
+        $user = $this->performAuthentication($credentials);
 
-			throw $e;
-		}
+        if ($activated and ! $user->isActivated())
+        {
+            $login = $user->getLogin();
+            throw new UserNotActivatedException("Cannot login user [$login] as they are not activated.");
+        }
 
-		if ($throttlingEnabled and isset($throttle))
-		{
-			$throttle->clearLoginAttempts();
-		}
+        return $user;
+    }
 
-		$user->clearResetPassword();
+    /**
+     * Performs check against credentials supplied and throttling
+     *
+     * @param  array  $credentials [description]
+     * @throws \Cartalyst\Sentry\Throttling\UserBannedException
+     * @throws \Cartalyst\Sentry\Throttling\UserSuspendedException
+     * @throws \Cartalyst\Sentry\Users\LoginRequiredException
+     * @throws \Cartalyst\Sentry\Users\PasswordRequiredException
+     * @throws \Cartalyst\Sentry\Users\UserNotFoundException
+     * @return \Cartalyst\Sentry\Users\UserInterface
+     * @return [type]              [description]
+     */
+    private function performAuthentication(array $credentials)
+    {
+        // We'll default to the login name field, but fallback to a hard-coded
+        // 'login' key in the array that was passed.
+        $loginName = $this->userProvider->getEmptyUser()->getLoginName();
+        $loginCredentialKey = (isset($credentials[$loginName])) ? $loginName : 'login';
 
-		$this->login($user, $remember);
+        if (empty($credentials[$loginCredentialKey]))
+        {
+            throw new LoginRequiredException("The [$loginCredentialKey] attribute is required.");
+        }
 
-		return $this->user;
-	}
+        if (empty($credentials['password']))
+        {
+            throw new PasswordRequiredException('The password attribute is required.');
+        }
+
+        // If the user did the fallback 'login' key for the login code which
+        // did not match the actual login name, we'll adjust the array so the
+        // actual login name is provided.
+        if ($loginCredentialKey !== $loginName)
+        {
+            $credentials[$loginName] = $credentials[$loginCredentialKey];
+            unset($credentials[$loginCredentialKey]);
+        }
+
+        // If throttling is enabled, we'll firstly check the throttle.
+        // This will tell us if the user is banned before we even attempt
+        // to authenticate them
+        if ($throttlingEnabled = $this->throttleProvider->isEnabled())
+        {
+            if ($throttle = $this->throttleProvider->findByUserLogin($credentials[$loginName], $this->ipAddress))
+            {
+                $throttle->check();
+            }
+        }
+
+        try
+        {
+            $user = $this->userProvider->findByCredentials($credentials);
+        }
+        catch (UserNotFoundException $e)
+        {
+            if ($throttlingEnabled and isset($throttle))
+            {
+                $throttle->addLoginAttempt();
+            }
+
+            throw $e;
+        }
+
+        if ($throttlingEnabled and isset($throttle))
+        {
+            $throttle->clearLoginAttempts();
+        }
+
+        return $user;
+    }
 
 	/**
 	 * Alias for authenticating with the remember flag checked.
